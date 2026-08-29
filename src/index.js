@@ -18,13 +18,14 @@ import {
   buildPsychedelicListMessage
 } from "./telegram.js";
 import { renderDashboardHtml } from "./dashboard.js";
+import { classifyProduct } from "./classifier.js";
 import {
   validateWebhookSecret,
   validateAdminAuth,
   checkRateLimit
 } from "./auth.js";
 
-export { performStockCheck };
+export { performStockCheck, classifyProduct };
 
 // ─── Webhook Command Processing ─────────────────────────────
 
@@ -123,9 +124,23 @@ async function handleTelegramUpdate(update, env, ctx) {
         const pageNum = parseInt(arg, 10) || 1;
         const allProducts = await getProductList(env.BOTANICALS_STORE);
 
-        // Fast O(1) filter using pre-computed classification stored on product record
+        // Filter and hydrate classification (supports both pre-computed records & legacy snapshots)
         const psychedelicInStock = allProducts
-          .filter(p => p.inStock && p.isPsychedelic === true)
+          .filter(p => p.inStock)
+          .map(p => {
+            if (p.isPsychedelic !== undefined && p.categoryLabel && p.potency !== undefined) {
+              return p;
+            }
+            const info = classifyProduct(p);
+            return {
+              ...p,
+              isPsychedelic: info.isPsychedelic,
+              categoryLabel: info.categoryLabel || null,
+              potency: info.potency || null,
+              description: info.description || null
+            };
+          })
+          .filter(p => p.isPsychedelic === true)
           .sort((a, b) => (b.potency || 0) - (a.potency || 0));
 
         const msg = buildPsychedelicListMessage(psychedelicInStock, pageNum, 15);
