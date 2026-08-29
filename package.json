@@ -1,0 +1,23 @@
+{
+  "name": "botanicals-stock-bot",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker Telegram bot monitoring 100% Pure Botanicals product stock availability",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node test/test-full-pipeline.js"
+  },
+  "keywords": [
+    "cloudflare-workers",
+    "telegram-bot",
+    "stock-monitor",
+    "botanicals"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "wrangler": "^3.90.0"
+  }
+}

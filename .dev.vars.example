@@ -1,0 +1,4 @@
+TELEGRAM_BOT_TOKEN="your_telegram_bot_token_here"
+TELEGRAM_CHAT_ID="428883333"
+ADMIN_TOKEN="your_admin_secret_token"
+TELEGRAM_WEBHOOK_SECRET="optional_telegram_webhook_secret"

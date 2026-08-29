@@ -1,0 +1,442 @@
+/**
+ * Telegram Bot API Client and Message Formatters
+ */
+
+const MAX_MESSAGE_LENGTH = 3900;
+
+/**
+ * Escapes characters for safe interpolation into Telegram HTML parse_mode
+ */
+export function escapeHtml(text) {
+  if (!text) return "";
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+/**
+ * Constant-time comparison for security tokens
+ */
+export function secureCompare(a, b) {
+  if (!a || !b || a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+
+/**
+ * Strips '100% Pure Botanicals' branding boilerplate from product titles
+ */
+export function cleanProductName(name) {
+  if (!name) return "";
+  return name
+    .replace(/100%\s*PURE\s*BOTANICALS[®™]?\s*\|\|/gi, "")
+    .replace(/\|\|\s*100%\s*PURE\s*BOTANICALS[®™]?/gi, "")
+    .replace(/100%\s*PURE\s*BOTANICALS[®™]?/gi, "")
+    .replace(/^100%\s*Pure\s+/i, "")
+    .replace(/^100%\s*PURE\s+/i, "")
+    .replace(/^100\s*Percent\s*Pure\s+/i, "")
+    .replace(/^\|\|\s*/, "")
+    .replace(/\s*\|\|\s*$/, "")
+    .trim();
+}
+
+/**
+ * Sends a message via Telegram Bot API with retry and abort signal
+ */
+export async function sendTelegram(botToken, chatId, message, options = {}) {
+  if (!botToken || !chatId) {
+    console.warn("Telegram credentials missing");
+    return false;
+  }
+
+  const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
+  const maxAttempts = 3;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: message,
+          parse_mode: "HTML",
+          disable_web_page_preview: options.disablePreview !== false,
+        }),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (resp.ok) {
+        return true;
+      }
+
+      const status = resp.status;
+      let bodyText = "";
+      try {
+        bodyText = await resp.text();
+      } catch (_) {}
+
+      console.error(`Telegram API error status=${status} body=${bodyText.substring(0, 200)}`);
+
+      if (status === 429 && attempt < maxAttempts) {
+        let retryAfter = 5;
+        try {
+          const resJson = JSON.parse(bodyText);
+          if (resJson?.parameters?.retry_after) {
+            retryAfter = Math.min(resJson.parameters.retry_after, 10);
+          }
+        } catch (_) {}
+        await new Promise(resolve => setTimeout(resolve, retryAfter * 1000));
+        continue;
+      }
+
+      if (status >= 500 && attempt < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, attempt * 2000));
+        continue;
+      }
+
+      return false;
+    } catch (err) {
+      console.error(`Telegram attempt ${attempt} failed:`, err.message);
+      if (attempt < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, attempt * 2000));
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Split large content into safe chunks for Telegram
+ */
+export async function sendChunkedMessages(botToken, chatId, header, items, footer) {
+  const messages = [];
+  let currentLines = [];
+  let currentLen = header.length + (footer ? footer.length : 0);
+
+  for (const item of items) {
+    if (currentLen + item.length > MAX_MESSAGE_LENGTH) {
+      messages.push(header + currentLines.join("") + (footer || ""));
+      currentLines = [item];
+      currentLen = header.length + (footer ? footer.length : 0) + item.length;
+    } else {
+      currentLines.push(item);
+      currentLen += item.length;
+    }
+  }
+
+  if (currentLines.length > 0) {
+    messages.push(header + currentLines.join("") + (footer || ""));
+  }
+
+  for (const msg of messages) {
+    const success = await sendTelegram(botToken, chatId, msg);
+    if (!success) return false;
+    // Small delay between chunks to respect rate limits
+    if (messages.length > 1) {
+      await new Promise(r => setTimeout(r, 400));
+    }
+  }
+
+  return true;
+}
+
+// ─── Message Builders ──────────────────────────────────────────
+
+/**
+ * Build daily 6:00 PM IST update message
+ */
+export function buildDailyUpdateMessage({ inStockCount, totalCount, restocked, newlyAdded, inStockProducts }) {
+  const hasRestocks = (restocked && restocked.length > 0) || (newlyAdded && newlyAdded.length > 0);
+  
+  let msg = `🌿 <b>100% Pure Botanicals — Daily Stock Update (6:00 PM IST)</b>\n\n`;
+  msg += `📊 <b>Status:</b> <b>${inStockCount}</b> of <b>${totalCount}</b> products are currently <b>In Stock</b> ✅\n\n`;
+
+  if (hasRestocks) {
+    msg += `🔔 <b>Recently Restocked / Available Products:</b>\n`;
+    const allNew = [...(restocked || []), ...(newlyAdded || [])];
+    allNew.slice(0, 15).forEach((p, idx) => {
+      msg += `${idx + 1}. <a href="${escapeHtml(p.url)}"><b>${escapeHtml(p.name)}</b></a> — <code>${escapeHtml(p.price)}</code>\n`;
+    });
+    if (allNew.length > 15) {
+      msg += `<i>...and ${allNew.length - 15} more restocked items.</i>\n`;
+    }
+    msg += `\n`;
+  } else {
+    msg += `ℹ️ <i>No new restock transitions detected since the last check.</i>\n\n`;
+  }
+
+  // Highlight a few popular in-stock items
+  if (inStockProducts && inStockProducts.length > 0) {
+    msg += `📦 <b>Sample In-Stock Items:</b>\n`;
+    inStockProducts.slice(0, 5).forEach((p, idx) => {
+      msg += `• <a href="${escapeHtml(p.url)}">${escapeHtml(p.name.slice(0, 70))}</a> (<code>${escapeHtml(p.price)}</code>)\n`;
+    });
+    msg += `\n`;
+  }
+
+  msg += `💡 <b>Commands:</b>\n`;
+  msg += `• /instock — View full list of in-stock items\n`;
+  msg += `• /search &lt;item&gt; — Search product availability\n`;
+  msg += `• /check — Trigger real-time catalog refresh\n`;
+  msg += `\n🌐 <a href="https://100percentpurebotanicals.com/shop">Visit Online Store</a>`;
+
+  return msg;
+}
+
+/**
+ * Build Restock Alert message (when new items are detected)
+ */
+export function buildRestockAlertMessage(restocked, newlyAdded) {
+  const allItems = [...(restocked || []), ...(newlyAdded || [])];
+  const count = allItems.length;
+
+  let msg = `🚨 <b>RESTOCK ALERT: ${count} Product${count > 1 ? "s" : ""} In Stock!</b>\n\n`;
+
+  allItems.forEach((p, idx) => {
+    const cleanName = cleanProductName(p.name);
+    msg += `${idx + 1}. <a href="${escapeHtml(p.url)}"><b>${escapeHtml(cleanName)}</b></a>\n`;
+    msg += `   💰 Price: <code>${escapeHtml(p.price)}</code>\n`;
+    msg += `   🛒 <a href="${escapeHtml(p.url)}">Buy / View on Website</a>\n\n`;
+  });
+
+  msg += `🌐 <a href="https://100percentpurebotanicals.com/shop">View Store</a>`;
+  return msg;
+}
+
+/**
+ * Build In-Stock list messages (with pagination support)
+ */
+export function buildInStockListChunks(inStockProducts, page = 1, pageSize = 15) {
+  const total = inStockProducts.length;
+  const totalPages = Math.ceil(total / pageSize) || 1;
+  const currentPage = Math.max(1, Math.min(page, totalPages));
+
+  const startIdx = (currentPage - 1) * pageSize;
+  const endIdx = Math.min(startIdx + pageSize, total);
+  const pageItems = inStockProducts.slice(startIdx, endIdx);
+
+  const header = `📦 <b>In Stock Products (${total} Available)</b>\n` +
+                 `<i>Page ${currentPage} of ${totalPages}</i>\n\n`;
+
+  const lines = pageItems.map((p, i) => {
+    const num = startIdx + i + 1;
+    const cleanName = cleanProductName(p.name);
+    return `${num}. <a href="${escapeHtml(p.url)}"><b>${escapeHtml(cleanName)}</b></a>\n` +
+           `   💰 <code>${escapeHtml(p.price)}</code> | <a href="${escapeHtml(p.url)}">Direct Link</a>\n\n`;
+  });
+
+  let footer = `\n`;
+  if (currentPage < totalPages) {
+    footer += `➡️ To see more, type: <code>/instock ${currentPage + 1}</code>\n`;
+  }
+  if (currentPage > 1) {
+    footer += `⬅️ Previous page: <code>/instock ${currentPage - 1}</code>\n`;
+  }
+  footer += `🔍 To search a specific item: <code>/search &lt;keyword&gt;</code>\n`;
+  footer += `🌐 <a href="https://100percentpurebotanicals.com/shop">Visit Shop</a>`;
+
+  return {
+    header,
+    lines,
+    footer,
+    currentPage,
+    totalPages,
+    totalItems: total
+  };
+}
+
+/**
+ * Build Search Results message
+ */
+export function buildSearchResultsMessage(query, matches) {
+  const cleanQuery = escapeHtml(query);
+  if (!matches || matches.length === 0) {
+    return `🔍 <b>Search Results for &quot;${cleanQuery}&quot;</b>\n\n` +
+           `❌ No matching products found.\n\n` +
+           `💡 Try a shorter keyword or check /instock for all available products.`;
+  }
+
+  const inStockMatches = matches.filter(m => m.inStock);
+  const outStockMatches = matches.filter(m => !m.inStock);
+
+  let msg = `🔍 <b>Search Results for &quot;${cleanQuery}&quot; (${matches.length} found)</b>\n\n`;
+
+  if (inStockMatches.length > 0) {
+    msg += `✅ <b>In Stock (${inStockMatches.length}):</b>\n`;
+    inStockMatches.slice(0, 10).forEach((p, idx) => {
+      const cleanName = cleanProductName(p.name);
+      msg += `${idx + 1}. <a href="${escapeHtml(p.url)}"><b>${escapeHtml(cleanName)}</b></a>\n` +
+             `   💰 <code>${escapeHtml(p.price)}</code> | <a href="${escapeHtml(p.url)}">Buy Now</a>\n\n`;
+    });
+    if (inStockMatches.length > 10) {
+      msg += `<i>...and ${inStockMatches.length - 10} more in-stock items.</i>\n\n`;
+    }
+  }
+
+  if (outStockMatches.length > 0) {
+    msg += `❌ <b>Out of Stock (${outStockMatches.length}):</b>\n`;
+    outStockMatches.slice(0, 5).forEach((p, idx) => {
+      const cleanName = cleanProductName(p.name);
+      msg += `• <a href="${escapeHtml(p.url)}">${escapeHtml(cleanName)}</a> (<code>${escapeHtml(p.price)}</code>)\n`;
+    });
+    if (outStockMatches.length > 5) {
+      msg += `<i>...and ${outStockMatches.length - 5} more out-of-stock items.</i>\n`;
+    }
+    msg += `\n`;
+  }
+
+  msg += `🌐 <a href="https://100percentpurebotanicals.com/shop">Visit Shop</a>`;
+  return msg;
+}
+
+/**
+ * Build Recent Restocks message
+ */
+export function buildRecentRestocksMessage(recentRestocks) {
+  if (!recentRestocks || recentRestocks.length === 0) {
+    return `🔔 <b>Recent Restocks</b>\n\n` +
+           `No restocks have been recorded yet. As soon as an out-of-stock item becomes available, it will be listed here.`;
+  }
+
+  let msg = `🔔 <b>Recently Restocked Items (${recentRestocks.length}):</b>\n\n`;
+  recentRestocks.slice(0, 15).forEach((p, idx) => {
+    const timeStr = p.restockedAt 
+      ? new Date(p.restockedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) 
+      : "";
+    const cleanName = cleanProductName(p.name);
+    msg += `${idx + 1}. <a href="${escapeHtml(p.url)}"><b>${escapeHtml(cleanName)}</b></a>\n` +
+           `   💰 <code>${escapeHtml(p.price)}</code>` +
+           (timeStr ? ` | 🕒 <i>${escapeHtml(timeStr)}</i>` : "") +
+           `\n   🛒 <a href="${escapeHtml(p.url)}">Direct Link</a>\n\n`;
+  });
+
+  return msg;
+}
+
+/**
+ * Build Psychedelic In-Stock list message (with pagination and potency ratings)
+ */
+export function buildPsychedelicListMessage(products, page = 1, pageSize = 15) {
+  if (!products || products.length === 0) {
+    return {
+      header: `🍄 <b>Psychedelic / Entheogenic Products — In Stock</b>\n\n` +
+              `❌ No psychedelic products are currently in stock.\n` +
+              `Check back later or use <code>/check</code> to refresh the catalog.\n`,
+      lines: [],
+      footer: `\n🌐 <a href="https://100percentpurebotanicals.com/shop">Visit Shop</a>`
+    };
+  }
+
+  const total = products.length;
+  const totalPages = Math.ceil(total / pageSize) || 1;
+  const currentPage = Math.max(1, Math.min(page, totalPages));
+
+  const startIdx = (currentPage - 1) * pageSize;
+  const endIdx = Math.min(startIdx + pageSize, total);
+  const pageItems = products.slice(startIdx, endIdx);
+
+  const header = `🍄 <b>Psychedelic & Entheogenic Products — In Stock (${total} Available)</b>\n` +
+                 `<i>Page ${currentPage} of ${totalPages} • Sorted by potency ↓</i>\n\n`;
+
+  const lines = pageItems.map((p, i) => {
+    const num = startIdx + i + 1;
+    const rating = p.potency || 0;
+    const label = p.categoryLabel || "Botanical";
+    const desc = p.description || "";
+    const cleanName = cleanProductName(p.name);
+
+    let itemText = `${num}. <a href="${escapeHtml(p.url)}"><b>${escapeHtml(cleanName)}</b></a>\n` +
+                   `   🏷 <i>${escapeHtml(label)}</i> • ⚡ Potency: <b>${rating}/10</b>\n`;
+
+    if (desc) {
+      itemText += `   📝 <i>${escapeHtml(desc)}</i>\n`;
+    }
+
+    itemText += `   💰 <code>${escapeHtml(p.price)}</code> | <a href="${escapeHtml(p.url)}">Buy Now</a>\n\n`;
+
+    return itemText;
+  });
+
+  let footer = `\n`;
+  if (currentPage < totalPages) {
+    footer += `➡️ Next page: <code>/psychedelic ${currentPage + 1}</code>\n`;
+  }
+  if (currentPage > 1) {
+    footer += `⬅️ Previous page: <code>/psychedelic ${currentPage - 1}</code>\n`;
+  }
+  footer += `🔍 Search specific: <code>/search &lt;keyword&gt;</code>\n`;
+  footer += `🌐 <a href="https://100percentpurebotanicals.com/shop">Visit Shop</a>`;
+
+  return {
+    header,
+    lines,
+    footer,
+    currentPage,
+    totalPages,
+    totalItems: total
+  };
+}
+
+/**
+ * Build Status message
+ */
+export function buildStatusMessage(meta) {
+  const lastCheckStr = meta?.lastCheck 
+    ? new Date(meta.lastCheck).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })
+    : "Never";
+
+  const total = meta?.totalCount ?? "—";
+  const inStock = meta?.inStockCount ?? "—";
+  const outOfStock = meta?.outOfStockCount ?? "—";
+  const errors = meta?.consecutiveErrors || 0;
+  const isHealthy = errors < 5;
+
+  return [
+    `📊 <b>100% Pure Botanicals Stock Monitor Status</b>`,
+    ``,
+    `• Health: <b>${isHealthy ? "Healthy ✅" : "Degraded ⚠️"}</b>`,
+    `• Last Checked: <code>${escapeHtml(lastCheckStr)}</code> (IST)`,
+    `• Total Tracked Products: <b>${total}</b>`,
+    `• In Stock Products: <b>${inStock}</b> ✅`,
+    `• Out of Stock Products: <b>${outOfStock}</b> ❌`,
+    `• Schedule: <b>Daily at 6:00 PM IST</b> (12:30 UTC)`,
+    errors > 0 ? `• Consecutive Errors: <b>${errors}</b>` : ``,
+    ``,
+    `💡 Commands: /instock, /psychedelic, /search, /recent, /check, /help`
+  ].filter(Boolean).join("\n");
+}
+
+/**
+ * Build Help message
+ */
+export function buildHelpMessage() {
+  return [
+    `🌿 <b>100% Pure Botanicals Stock Bot</b>`,
+    `Monitors product availability and alerts you when out-of-stock items come back into stock.`,
+    ``,
+    `📋 <b>Available Commands:</b>`,
+    `• <code>/instock</code> or <code>/stock</code> — List all products currently in stock`,
+    `• <code>/instock [page]</code> — View specific page (e.g. <code>/instock 2</code>)`,
+    `• <code>/psychedelic</code> — List psychedelic/entheogenic products in stock 🍄`,
+    `• <code>/search &lt;item&gt;</code> — Search for a product by name or keyword`,
+    `• <code>/recent</code> or <code>/restocked</code> — View items that recently came in stock`,
+    `• <code>/check</code> — Trigger an immediate live catalog check`,
+    `• <code>/status</code> — View monitor statistics and last check time`,
+    `• <code>/help</code> — Show this commands menu`,
+    ``,
+    `⏰ <b>Automated Update:</b> Daily report at <b>6:00 PM IST</b>.`
+  ].join("\n");
+}

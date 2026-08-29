@@ -1,0 +1,26 @@
+name = "botanicals-stock-bot"
+main = "src/index.js"
+compatibility_date = "2024-12-01"
+
+# ─── Cron Trigger ───────────────────────────────────────────
+# 30 12 * * * -> Daily at 12:30 UTC = 6:00 PM IST (Asia/Kolkata)
+[triggers]
+crons = [
+  "30 12 * * *"
+]
+
+# ─── KV Namespace Binding ───────────────────────────────────
+[[kv_namespaces]]
+binding = "BOTANICALS_STORE"
+id = "57e197c1b4d5475f806e29e594312967"
+
+# ─── Environment Variables ───────────────────────────────────
+[vars]
+BASE_URL = "https://100percentpurebotanicals.com"
+TIMEZONE = "Asia/Kolkata"
+
+# ─── Secrets (Set via wrangler secret put) ───────────────────
+# wrangler secret put TELEGRAM_BOT_TOKEN
+# wrangler secret put TELEGRAM_CHAT_ID
+# wrangler secret put ADMIN_TOKEN
+# wrangler secret put TELEGRAM_WEBHOOK_SECRET
