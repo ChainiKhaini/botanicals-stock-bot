@@ -1,6 +1,7 @@
 /**
  * Product Classification and Categorization Engine
  * Maintains psychoactive & entheogenic taxonomy, potency ratings (1-10), and descriptions.
+ * Keywords are pre-lowercased at module initialization for maximum runtime performance.
  */
 
 export const PSYCHEDELIC_CATEGORIES = [
@@ -61,6 +62,16 @@ export const EXCLUDE_KEYWORDS = [
   "bee venom", "stag antler", "deer antler", "elk antler", "ghee", "honey", "wine yeast"
 ];
 
+// ─── Pre-lowercased Static Arrays for High Performance ─────────
+const PRECOMPILED_CATEGORIES = PSYCHEDELIC_CATEGORIES.map(cat => ({
+  rating: cat.rating,
+  label: cat.label,
+  desc: cat.desc,
+  keywordsLower: cat.keywords.map(kw => kw.toLowerCase())
+}));
+
+const PRECOMPILED_EXCLUDES = EXCLUDE_KEYWORDS.map(kw => kw.toLowerCase());
+
 /**
  * Strips '100% Pure Botanicals' branding boilerplate from product titles
  */
@@ -80,8 +91,8 @@ export function cleanProductName(name) {
 
 /**
  * Classifies a product against the entheogenic / psychedelic taxonomy.
- * Evaluates against product name with explicit non-psychedelic exclusions.
- * @param {{ name: string, slug?: string }} product
+ * Evaluates against product name with precompiled lowercase exclusions.
+ * @param {{ name: string }} product
  * @returns {{ isPsychedelic: boolean, categoryLabel?: string, potency?: number, description?: string }}
  */
 export function classifyProduct(product) {
@@ -91,21 +102,25 @@ export function classifyProduct(product) {
 
   const nameLower = product.name.toLowerCase();
 
-  // Exclude non-psychedelic / culinary / medicinal items
-  for (const exc of EXCLUDE_KEYWORDS) {
-    if (nameLower.includes(exc)) {
+  // Fast exclusion check
+  for (let i = 0; i < PRECOMPILED_EXCLUDES.length; i++) {
+    if (nameLower.includes(PRECOMPILED_EXCLUDES[i])) {
       return { isPsychedelic: false };
     }
   }
 
-  for (const cat of PSYCHEDELIC_CATEGORIES) {
-    if (cat.keywords.some(kw => nameLower.includes(kw.toLowerCase()))) {
-      return {
-        isPsychedelic: true,
-        categoryLabel: cat.label,
-        potency: cat.rating,
-        description: cat.desc
-      };
+  // Fast category match
+  for (let i = 0; i < PRECOMPILED_CATEGORIES.length; i++) {
+    const cat = PRECOMPILED_CATEGORIES[i];
+    for (let j = 0; j < cat.keywordsLower.length; j++) {
+      if (nameLower.includes(cat.keywordsLower[j])) {
+        return {
+          isPsychedelic: true,
+          categoryLabel: cat.label,
+          potency: cat.rating,
+          description: cat.desc
+        };
+      }
     }
   }
 

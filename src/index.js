@@ -4,9 +4,8 @@
  * Main Worker Router & Scheduled Cron Entrypoint
  */
 
-import { performStockCheck } from "./monitor.js";
-import { fetchFullCatalog } from "./scraper.js";
-import { loadSnapshot, loadMeta } from "./store.js";
+import { performStockCheck, getProductList } from "./monitor.js";
+import { loadMeta } from "./store.js";
 import {
   sendTelegram,
   sendChunkedMessages,
@@ -18,10 +17,6 @@ import {
   buildHelpMessage,
   buildPsychedelicListMessage
 } from "./telegram.js";
-import {
-  classifyProduct,
-  isPsychedelicProduct
-} from "./classifier.js";
 import { renderDashboardHtml } from "./dashboard.js";
 import {
   validateWebhookSecret,
@@ -29,8 +24,7 @@ import {
   checkRateLimit
 } from "./auth.js";
 
-// Re-export for external and test usage
-export { performStockCheck, isPsychedelicProduct, classifyProduct };
+export { performStockCheck };
 
 // ─── Webhook Command Processing ─────────────────────────────
 
@@ -42,8 +36,13 @@ async function handleTelegramUpdate(update, env, ctx) {
   const configuredChatId = String(env.TELEGRAM_CHAT_ID || "");
   const botToken = env.TELEGRAM_BOT_TOKEN;
 
-  // Optional chat ID authorization filter
-  if (configuredChatId && chatIdStr !== configuredChatId) {
+  // Fail closed: require TELEGRAM_CHAT_ID to be configured
+  if (!configuredChatId) {
+    console.error("Security Error: TELEGRAM_CHAT_ID is not configured in environment");
+    return;
+  }
+
+  if (chatIdStr !== configuredChatId) {
     console.warn(`Unauthorized message from chat ID: ${chatIdStr}`);
     return;
   }
@@ -91,15 +90,8 @@ async function handleTelegramUpdate(update, env, ctx) {
     ctx.waitUntil((async () => {
       try {
         const pageNum = parseInt(arg, 10) || 1;
-        let snapshot = await loadSnapshot(env.BOTANICALS_STORE).catch(() => null);
-        let inStockList = [];
-
-        if (snapshot && Object.keys(snapshot).length > 0) {
-          inStockList = Object.values(snapshot).filter(p => p.inStock && p.status !== "missing");
-        } else {
-          const catalog = await fetchFullCatalog();
-          inStockList = catalog.inStockProducts;
-        }
+        const allProducts = await getProductList(env.BOTANICALS_STORE);
+        const inStockList = allProducts.filter(p => p.inStock);
 
         if (inStockList.length === 0) {
           await sendTelegram(botToken, chatIdStr, "ℹ️ No in-stock products found in the catalog.");
@@ -129,29 +121,12 @@ async function handleTelegramUpdate(update, env, ctx) {
     ctx.waitUntil((async () => {
       try {
         const pageNum = parseInt(arg, 10) || 1;
-        let allProducts = [];
-        const snapshot = await loadSnapshot(env.BOTANICALS_STORE).catch(() => null);
+        const allProducts = await getProductList(env.BOTANICALS_STORE);
 
-        if (snapshot && Object.keys(snapshot).length > 0) {
-          allProducts = Object.values(snapshot).filter(p => p.status !== "missing");
-        } else {
-          const catalog = await fetchFullCatalog();
-          allProducts = catalog.products;
-        }
-
-        // Filter in-stock psychedelics, attach classification & description, sort by potency
+        // Fast O(1) filter using pre-computed classification stored on product record
         const psychedelicInStock = allProducts
-          .filter(p => p.inStock && isPsychedelicProduct(p))
-          .map(p => {
-            const info = classifyProduct(p);
-            return {
-              ...p,
-              potency: info.potency,
-              categoryLabel: info.categoryLabel,
-              description: info.description
-            };
-          })
-          .sort((a, b) => b.potency - a.potency);
+          .filter(p => p.inStock && p.isPsychedelic === true)
+          .sort((a, b) => (b.potency || 0) - (a.potency || 0));
 
         const msg = buildPsychedelicListMessage(psychedelicInStock, pageNum, 15);
         await sendChunkedMessages(botToken, chatIdStr, msg.header, msg.lines, msg.footer);
@@ -172,16 +147,7 @@ async function handleTelegramUpdate(update, env, ctx) {
 
     ctx.waitUntil((async () => {
       try {
-        const snapshot = await loadSnapshot(env.BOTANICALS_STORE).catch(() => null);
-        let allProducts = [];
-
-        if (snapshot && Object.keys(snapshot).length > 0) {
-          allProducts = Object.values(snapshot).filter(p => p.status !== "missing");
-        } else {
-          const catalog = await fetchFullCatalog();
-          allProducts = catalog.products;
-        }
-
+        const allProducts = await getProductList(env.BOTANICALS_STORE);
         const queryLower = arg.toLowerCase();
         const matches = allProducts.filter(p => 
           p.name.toLowerCase().includes(queryLower) || 
@@ -203,12 +169,13 @@ async function handleTelegramUpdate(update, env, ctx) {
 
 export default {
   /**
-   * Cloudflare Cron Trigger (Runs daily at 6:00 PM IST = 12:30 UTC)
+   * Cloudflare Cron Trigger (Runs periodic 30m checks + 6:00 PM IST daily digest)
    */
   async scheduled(event, env, ctx) {
     console.log("Cron trigger fired:", event.cron);
+    const isDailyDigest = event.cron === "30 12 * * *";
     ctx.waitUntil(
-      performStockCheck(env, { isScheduled: true }).catch(err => {
+      performStockCheck(env, { isScheduled: isDailyDigest, isPeriodic: !isDailyDigest }).catch(err => {
         console.error("Scheduled execution error:", err);
       })
     );

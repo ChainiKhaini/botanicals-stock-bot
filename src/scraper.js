@@ -1,8 +1,10 @@
 /**
  * Scraper module for 100% Pure Botanicals
  * Endpoint: GoDaddy Online Store API v2
- * Enforces fail-closed completeness validation, bounded concurrency, and clean data normalization.
+ * Enforces fail-closed completeness validation, bounded concurrency, and pre-computed classification.
  */
+
+import { classifyProduct } from "./classifier.js";
 
 export const STORE_API_BASE = "https://79b5e8ea-9db5-4e7f-bbf4-ba7bbf739236.onlinestore.godaddy.com/api/v2";
 export const STORE_FRONTEND_BASE = "https://100percentpurebotanicals.com";
@@ -59,7 +61,7 @@ export async function fetchProductPage(page = 1, perPage = 100, customFetch = fe
 
 /**
  * Normalizes raw API product object into clean structured format.
- * Separates static product info from stock state.
+ * Pre-computes classification once at ingest time so Telegram commands run in O(1).
  */
 export function normalizeProduct(raw, observedAt = new Date().toISOString()) {
   const id = String(raw.id);
@@ -88,8 +90,11 @@ export function normalizeProduct(raw, observedAt = new Date().toISOString()) {
   const totalOnHand = typeof raw.total_on_hand === "number" ? raw.total_on_hand : null;
   const imageUrl = raw.default_asset_url || (raw.image_list && raw.image_list[0]?.url) || "";
 
-  // Timestamp semantics: use real source timestamp if present, otherwise null
+  // Timestamp semantics
   const sourceUpdatedAt = raw.updated_at || null;
+
+  // Pre-computed classification (done once per product on ingestion)
+  const classification = classifyProduct({ name });
 
   return {
     id,
@@ -104,7 +109,11 @@ export function normalizeProduct(raw, observedAt = new Date().toISOString()) {
     imageUrl,
     sourceUpdatedAt,
     lastObservedAt: observedAt,
-    status: inStock ? "active" : "out_of_stock"
+    status: inStock ? "active" : "out_of_stock",
+    isPsychedelic: classification.isPsychedelic,
+    categoryLabel: classification.categoryLabel || null,
+    potency: classification.potency || null,
+    description: classification.description || null
   };
 }
 
@@ -214,7 +223,7 @@ export async function fetchFullCatalog(options = {}) {
   // 3. Strict completeness & integrity validation
   validateCatalogCompleteness(rawProducts, totalExpectedCount, totalPages);
 
-  // 4. Normalize products
+  // 4. Normalize products with pre-computed classification
   const products = rawProducts.map(raw => normalizeProduct(raw, observedAt));
   const inStockProducts = products.filter(p => p.inStock);
   const outOfStockProducts = products.filter(p => !p.inStock);

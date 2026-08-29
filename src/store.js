@@ -1,6 +1,6 @@
 /**
  * Storage and Diff Management using Cloudflare KV
- * Enforces fail-closed semantics, distributed locking, and accurate state transitions.
+ * Enforces fail-closed semantics, distributed locking, cacheTtl optimization, and state transitions.
  */
 
 export const KV_KEY_SNAPSHOT = "products_snapshot";
@@ -24,13 +24,13 @@ export class KVWriteError extends Error {
 }
 
 /**
- * Load product snapshot map from KV.
+ * Load product snapshot map from KV with cacheTtl optimization.
  * Fails closed: throws KVReadError if KV read fails. Returns null only when key does not exist.
  */
 export async function loadSnapshot(kv) {
   if (!kv) return null;
   try {
-    return await kv.get(KV_KEY_SNAPSHOT, { type: "json" });
+    return await kv.get(KV_KEY_SNAPSHOT, { type: "json", cacheTtl: 60 });
   } catch (err) {
     throw new KVReadError(`Failed to read snapshot from KV: ${err.message}`, err);
   }
@@ -128,7 +128,7 @@ export async function releaseLock(kv, lockKey = KV_KEY_LOCK) {
 
 /**
  * Compares verified complete catalog against previous KV snapshot.
- * Preserves missing-product semantics and tracks accurate state transitions.
+ * Preserves pre-computed classification and missing-product semantics.
  * @param {Record<string, any> | null} prevSnapshot
  * @param {Array<any>} currentProducts - Must be a complete, verified catalog
  * @returns {object} Diff results with next snapshot
@@ -193,6 +193,7 @@ export function diffCatalog(prevSnapshot, currentProducts) {
       name: prod.name,
       slug: prod.slug,
       url: prod.url,
+      relativeUrl: prod.relativeUrl,
       price: prod.price,
       priceNumeric: prod.priceNumeric,
       inStock: prod.inStock,
@@ -201,7 +202,11 @@ export function diffCatalog(prevSnapshot, currentProducts) {
       sourceUpdatedAt: prod.sourceUpdatedAt,
       lastObservedAt: nowIso,
       restockedAt,
-      status: prod.inStock ? "active" : "out_of_stock"
+      status: prod.inStock ? "active" : "out_of_stock",
+      isPsychedelic: prod.isPsychedelic === true,
+      categoryLabel: prod.categoryLabel || null,
+      potency: prod.potency || null,
+      description: prod.description || null
     };
   }
 
@@ -214,7 +219,6 @@ export function diffCatalog(prevSnapshot, currentProducts) {
           status: "missing",
           missingSince: nowIso
         });
-        // Retain in snapshot with status: 'missing' so history is not lost
         nextSnapshot[prevId] = {
           ...prevProd,
           inStock: false,

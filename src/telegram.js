@@ -23,6 +23,41 @@ export function escapeHtml(text) {
 }
 
 /**
+ * Reusable product line formatter for Telegram messages.
+ */
+export function formatProductLine(num, p, options = {}) {
+  const cleanName = cleanProductName(p.name);
+  const prefix = num ? `${num}. ` : "• ";
+  let text = `${prefix}<a href="${escapeHtml(p.url)}"><b>${escapeHtml(cleanName)}</b></a>\n`;
+
+  if (options.showCategory && p.categoryLabel) {
+    text += `   🏷 <i>${escapeHtml(p.categoryLabel)}</i>`;
+    if (options.showPotency && p.potency) {
+      text += ` • ⚡ Potency: <b>${p.potency}/10</b>`;
+    }
+    text += `\n`;
+  } else if (options.showPotency && p.potency) {
+    text += `   ⚡ Potency: <b>${p.potency}/10</b>\n`;
+  }
+
+  if (options.showDescription && p.description) {
+    text += `   📝 <i>${escapeHtml(p.description)}</i>\n`;
+  }
+
+  text += `   💰 <code>${escapeHtml(p.price)}</code>`;
+  if (options.showTimestamp && p.restockedAt) {
+    const timeStr = new Date(p.restockedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+    text += ` | 🕒 <i>${escapeHtml(timeStr)}</i>`;
+  }
+  if (options.showBuyLink !== false) {
+    text += ` | <a href="${escapeHtml(p.url)}">Buy Now</a>`;
+  }
+  text += `\n\n`;
+
+  return text;
+}
+
+/**
  * Sends a message via Telegram Bot API with retry and abort signal
  */
 export async function sendTelegram(botToken, chatId, message, options = {}) {
@@ -139,14 +174,7 @@ export function buildRestockAlertChunks(restocked, newlyAdded) {
   const count = allItems.length;
 
   const header = `🚨 <b>RESTOCK ALERT: ${count} Product${count > 1 ? "s" : ""} In Stock!</b>\n\n`;
-
-  const items = allItems.map((p, idx) => {
-    const cleanName = cleanProductName(p.name);
-    return `${idx + 1}. <a href="${escapeHtml(p.url)}"><b>${escapeHtml(cleanName)}</b></a>\n` +
-           `   💰 Price: <code>${escapeHtml(p.price)}</code>\n` +
-           `   🛒 <a href="${escapeHtml(p.url)}">Buy / View on Website</a>\n\n`;
-  });
-
+  const items = allItems.map((p, idx) => formatProductLine(idx + 1, p, { showBuyLink: true }));
   const footer = `🌐 <a href="https://100percentpurebotanicals.com/shop">View Store</a>`;
 
   return { header, items, footer, count };
@@ -213,12 +241,7 @@ export function buildInStockListChunks(inStockProducts, page = 1, pageSize = 15)
   const header = `📦 <b>In Stock Products (${total} Available)</b>\n` +
                  `<i>Page ${currentPage} of ${totalPages}</i>\n\n`;
 
-  const lines = pageItems.map((p, i) => {
-    const num = startIdx + i + 1;
-    const cleanName = cleanProductName(p.name);
-    return `${num}. <a href="${escapeHtml(p.url)}"><b>${escapeHtml(cleanName)}</b></a>\n` +
-           `   💰 <code>${escapeHtml(p.price)}</code> | <a href="${escapeHtml(p.url)}">Direct Link</a>\n\n`;
-  });
+  const lines = pageItems.map((p, i) => formatProductLine(startIdx + i + 1, p, { showBuyLink: true }));
 
   let footer = `\n`;
   if (currentPage < totalPages) {
@@ -265,24 +288,14 @@ export function buildPsychedelicListMessage(products, page = 1, pageSize = 15) {
   const header = `🍄 <b>Psychedelic & Entheogenic Products — In Stock (${total} Available)</b>\n` +
                  `<i>Page ${currentPage} of ${totalPages} • Sorted by potency ↓</i>\n\n`;
 
-  const lines = pageItems.map((p, i) => {
-    const num = startIdx + i + 1;
-    const rating = p.potency || 0;
-    const label = p.categoryLabel || "Botanical";
-    const desc = p.description || "";
-    const cleanName = cleanProductName(p.name);
-
-    let itemText = `${num}. <a href="${escapeHtml(p.url)}"><b>${escapeHtml(cleanName)}</b></a>\n` +
-                   `   🏷 <i>${escapeHtml(label)}</i> • ⚡ Potency: <b>${rating}/10</b>\n`;
-
-    if (desc) {
-      itemText += `   📝 <i>${escapeHtml(desc)}</i>\n`;
-    }
-
-    itemText += `   💰 <code>${escapeHtml(p.price)}</code> | <a href="${escapeHtml(p.url)}">Buy Now</a>\n\n`;
-
-    return itemText;
-  });
+  const lines = pageItems.map((p, i) => 
+    formatProductLine(startIdx + i + 1, p, {
+      showCategory: true,
+      showPotency: true,
+      showDescription: true,
+      showBuyLink: true
+    })
+  );
 
   let footer = `\n`;
   if (currentPage < totalPages) {
@@ -323,9 +336,7 @@ export function buildSearchResultsMessage(query, matches) {
   if (inStockMatches.length > 0) {
     msg += `✅ <b>In Stock (${inStockMatches.length}):</b>\n`;
     inStockMatches.slice(0, 10).forEach((p, idx) => {
-      const cleanName = cleanProductName(p.name);
-      msg += `${idx + 1}. <a href="${escapeHtml(p.url)}"><b>${escapeHtml(cleanName)}</b></a>\n` +
-             `   💰 <code>${escapeHtml(p.price)}</code> | <a href="${escapeHtml(p.url)}">Buy Now</a>\n\n`;
+      msg += formatProductLine(idx + 1, p, { showBuyLink: true });
     });
     if (inStockMatches.length > 10) {
       msg += `<i>...and ${inStockMatches.length - 10} more in-stock items.</i>\n\n`;
@@ -334,7 +345,7 @@ export function buildSearchResultsMessage(query, matches) {
 
   if (outStockMatches.length > 0) {
     msg += `❌ <b>Out of Stock (${outStockMatches.length}):</b>\n`;
-    outStockMatches.slice(0, 5).forEach((p, idx) => {
+    outStockMatches.slice(0, 5).forEach((p) => {
       const cleanName = cleanProductName(p.name);
       msg += `• <a href="${escapeHtml(p.url)}">${escapeHtml(cleanName)}</a> (<code>${escapeHtml(p.price)}</code>)\n`;
     });
@@ -359,14 +370,7 @@ export function buildRecentRestocksMessage(recentRestocks) {
 
   let msg = `🔔 <b>Recently Restocked Items (${recentRestocks.length}):</b>\n\n`;
   recentRestocks.slice(0, 15).forEach((p, idx) => {
-    const timeStr = p.restockedAt 
-      ? new Date(p.restockedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) 
-      : "";
-    const cleanName = cleanProductName(p.name);
-    msg += `${idx + 1}. <a href="${escapeHtml(p.url)}"><b>${escapeHtml(cleanName)}</b></a>\n` +
-           `   💰 <code>${escapeHtml(p.price)}</code>` +
-           (timeStr ? ` | 🕒 <i>${escapeHtml(timeStr)}</i>` : "") +
-           `\n   🛒 <a href="${escapeHtml(p.url)}">Direct Link</a>\n\n`;
+    msg += formatProductLine(idx + 1, p, { showTimestamp: true, showBuyLink: true });
   });
 
   return msg;
@@ -396,7 +400,7 @@ export function buildStatusMessage(meta) {
     `• In Stock Products: <b>${inStock}</b> ✅`,
     `• Out of Stock Products: <b>${outOfStock}</b> ❌`,
     missingCount > 0 ? `• Missing / Delisted: <b>${missingCount}</b> ⚠️` : ``,
-    `• Schedule: <b>Daily at 6:00 PM IST</b> (12:30 UTC)`,
+    `• Schedule: <b>Every 30m</b> (Daily Summary at <b>6:00 PM IST</b>)`,
     errors > 0 ? `• Consecutive Errors: <b>${errors}</b>` : ``,
     ``,
     `💡 Commands: /instock, /psychedelic, /search, /recent, /check, /help`
@@ -421,6 +425,6 @@ export function buildHelpMessage() {
     `• <code>/status</code> — View monitor statistics and last check time`,
     `• <code>/help</code> — Show this commands menu`,
     ``,
-    `⏰ <b>Automated Update:</b> Daily report at <b>6:00 PM IST</b>.`
+    `⏰ <b>Automated Checks:</b> Active monitoring every 30m (Daily digest at <b>6:00 PM IST</b>).`
   ].join("\n");
 }

@@ -25,6 +25,9 @@ test("normalizeProduct parses raw API product into structured format", () => {
   assert.equal(norm.sourceUpdatedAt, "2026-08-20T10:00:00Z");
   assert.equal(norm.lastObservedAt, "2026-08-30T00:00:00Z");
   assert.equal(norm.status, "active");
+  assert.equal(norm.isPsychedelic, true);
+  assert.equal(norm.potency, 8);
+  assert.equal(norm.categoryLabel, "Mescaline Cactus (San Pedro / Peyote)");
 });
 
 test("normalizeProduct handles missing/edge-case fields cleanly", () => {

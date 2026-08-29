@@ -24,9 +24,26 @@ import {
 } from "./telegram.js";
 
 /**
+ * Shared helper to load current catalog products from KV snapshot (cached) or live catalog fallback.
+ */
+export async function getProductList(kv, customFetch = fetch) {
+  try {
+    const snapshot = await loadSnapshot(kv);
+    if (snapshot && Object.keys(snapshot).length > 0) {
+      return Object.values(snapshot).filter(p => p.status !== "missing");
+    }
+  } catch (err) {
+    console.warn("Could not read snapshot from KV, falling back to live fetch:", err.message);
+  }
+
+  const catalog = await fetchFullCatalog({ customFetch });
+  return catalog.products;
+}
+
+/**
  * Performs a full, verified stock check pipeline run.
  * @param {object} env - Cloudflare Worker environment bindings
- * @param {object} options - Execution options ({ isScheduled, isManual, chatId, customFetch })
+ * @param {object} options - Execution options ({ isScheduled, isManual, isPeriodic, chatId, customFetch })
  * @returns {Promise<object>} Structured result telemetry
  */
 export async function performStockCheck(env, options = {}) {
@@ -36,6 +53,7 @@ export async function performStockCheck(env, options = {}) {
   const kv = env.BOTANICALS_STORE;
   const isScheduled = options.isScheduled === true;
   const isManual = options.isManual === true;
+  const isPeriodic = options.isPeriodic === true;
   const customFetch = options.customFetch || fetch;
 
   // 1. Acquire execution lock to prevent overlapping runs
@@ -108,7 +126,7 @@ export async function performStockCheck(env, options = {}) {
     };
     await saveMeta(kv, nextMeta);
 
-    // 6. Handle Telegram notifications
+    // 6. Handle Telegram notifications (with mutual exclusion to prevent duplicate alerts)
     if (diff.isFirstRun) {
       // First baseline run notification
       if (botToken && chatId) {
@@ -118,7 +136,7 @@ export async function performStockCheck(env, options = {}) {
           `• Total Products Tracked: <b>${catalog.totalCount}</b>`,
           `• In Stock: <b>${catalog.inStockCount}</b> ✅`,
           `• Out of Stock: <b>${catalog.outOfStockCount}</b> ❌`,
-          `• Schedule: Daily update at <b>6:00 PM IST</b>`,
+          `• Schedule: Active monitoring every 30m (Daily digest at <b>6:00 PM IST</b>)`,
           ``,
           `You will receive immediate alerts whenever out-of-stock products become available.`,
           `Type <code>/help</code> for available commands.`
@@ -142,13 +160,8 @@ export async function performStockCheck(env, options = {}) {
       };
     }
 
-    // Proactive restock alert (safely chunked)
-    if (diff.hasRestocks && botToken && chatId) {
-      const restockData = buildRestockAlertChunks(diff.restocked, diff.newlyAdded);
-      await sendChunkedMessages(botToken, chatId, restockData.header, restockData.items, restockData.footer, { customFetch });
-    }
-
-    // Daily scheduled update (at 6:00 PM IST)
+    // Notification routing:
+    // Case A: 6:00 PM IST Scheduled Daily Digest -> Sends unified daily update (with restocks if any)
     if (isScheduled && botToken && chatId) {
       const dailyData = buildDailyUpdateChunks({
         inStockCount: catalog.inStockCount,
@@ -158,8 +171,14 @@ export async function performStockCheck(env, options = {}) {
         inStockProducts: catalog.inStockProducts
       });
       await sendChunkedMessages(botToken, chatId, dailyData.header, dailyData.items, dailyData.footer, { customFetch });
-    } else if (isManual && botToken && chatId && !diff.hasRestocks) {
-      // Manual check completed without new restocks
+    }
+    // Case B: Periodic 30m check or manual check with restocks -> Sends instant restock alert
+    else if (diff.hasRestocks && botToken && chatId) {
+      const restockData = buildRestockAlertChunks(diff.restocked, diff.newlyAdded);
+      await sendChunkedMessages(botToken, chatId, restockData.header, restockData.items, restockData.footer, { customFetch });
+    }
+    // Case C: Manual check with no restocks -> Confirmation message
+    else if (isManual && botToken && chatId && !diff.hasRestocks) {
       const manualMsg = [
         `✅ <b>Check Complete:</b> Catalog is up to date.`,
         ``,
@@ -170,6 +189,7 @@ export async function performStockCheck(env, options = {}) {
       ].join("\n");
       await sendTelegram(botToken, chatId, manualMsg, { customFetch });
     }
+    // Case D: Periodic 30m check with no restocks -> Stays silent
 
     // Release execution lock
     await releaseLock(kv, KV_KEY_LOCK);
