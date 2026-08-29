@@ -1,123 +1,90 @@
 # 🌿 100% Pure Botanicals Stock Monitor — Telegram Bot & Cloudflare Worker
 
-A serverless Cloudflare Worker that monitors product availability on [100% Pure Botanicals](https://100percentpurebotanicals.com/shop), provides interactive Telegram commands to check in-stock products, automatically sends daily summaries at **6:00 PM IST**, and instantly alerts when out-of-stock items come back into stock.
+A production-grade, serverless Cloudflare Worker that monitors product availability on [100% Pure Botanicals](https://100percentpurebotanicals.com/shop), provides interactive Telegram commands to browse in-stock products and the curated psychedelic catalog, sends daily summaries at **6:00 PM IST**, and instantly alerts when out-of-stock items come back into stock.
 
 ---
 
-## 🚀 Features
+## 🚀 Key Features
 
-- 🔄 **Full Multi-Page Catalog Tracking**: Continuously monitors all 450+ products across all catalog pages.
+- 🔄 **Atomic Full-Catalog Tracking**: Scrapes all 450+ products across all pages with strict completeness verification (`products.length === total_count`) and duplicate ID detection.
+- 🍄 **Psychedelic & Entheogenic Taxonomy**: Dedicated `/psychedelic` command classifying entheogens on a 1–10 potency scale with 1-line traditional descriptions (while strictly excluding culinary and medicinal mushrooms).
 - ⏰ **Daily Automated 6:00 PM IST Updates**: Scheduled via Cloudflare Worker Cron Trigger (`30 12 * * *` UTC = 18:00 IST).
-- 🚨 **Instant Restock Alerts**: Automatically detects when a product transitions from `Out of Stock` to `In Stock`.
-- 💬 **Interactive Telegram Bot Commands**:
-  - `/instock` or `/stock` — Browse all currently available products with prices and links.
-  - `/instock <page>` — View specific page (e.g. `/instock 2`).
-  - `/search <keyword>` — Check if a specific botanical item is in stock.
-  - `/recent` or `/restocked` — View recently restocked items.
-  - `/check` — Trigger an immediate live catalog check.
-  - `/status` — View monitor statistics, in-stock ratio, and last check timestamp in IST.
-  - `/help` — Overview of commands.
-- 💾 **Persistent State**: Cloudflare KV (`BOTANICALS_STORE`) tracks product inventory diffs and restock history.
-- 📊 **Web Dashboard**: Clean dark-mode status page with manual check trigger at `/`.
+- 🚨 **Instant Safe Restock Alerts**: Detects `OUT_OF_STOCK -> IN_STOCK` transitions and sends safely chunked alerts (<3900 chars) that never exceed Telegram limits.
+- 🔒 **Fail-Closed Security**: Web Crypto API constant-time comparisons (`crypto.subtle.digest`) for token validation; endpoints fail closed with HTTP 500/401 if secrets are missing or invalid.
+- 🛡️ **Distributed Concurrency Lock**: KV-backed execution lock prevents overlapping cron and manual `/check` runs.
+- ⏱️ **Abuse Prevention**: Built-in 60-second rate limiter on manual `/check` requests.
+- 💾 **Persistent KV State**: Cloudflare KV (`BOTANICALS_STORE`) maintains product snapshots, metadata, and missing-product status tracking.
+- 📊 **Web Dashboard**: Responsive dark-mode dashboard with verified status metrics at `/`.
 
 ---
 
-## 📁 Project Structure
+## 💬 Available Telegram Bot Commands
+
+| Command | Description |
+|---|---|
+| `/psychedelic` (or `/psychadelic`) | In-stock psychedelic & entheogenic products sorted by potency (1–10/10) with descriptions 🍄 |
+| `/instock` or `/stock` | Paginated list of all products currently in stock with clean titles |
+| `/instock <page>` | View specific page (e.g. `/instock 2`) |
+| `/search <keyword>` | Search product catalog by name or keyword |
+| `/recent` or `/restocked` | View items that recently came back into stock |
+| `/check` | Trigger an immediate live catalog scan |
+| `/status` | View monitor health, total tracked items, in-stock ratio, and last check time |
+| `/help` | Overview of all commands |
+
+---
+
+## 📁 Modular Architecture
 
 ```
 botanicals-stock-bot/
+├── .github/
+│   └── workflows/
+│       └── ci.yml               # Automated GitHub Actions CI workflow
 ├── src/
-│   ├── index.js          # Cloudflare Worker router & cron handler
-│   ├── scraper.js        # Multi-page product catalog fetcher
-│   ├── store.js          # Cloudflare KV state & stock diffing logic
-│   └── telegram.js       # Telegram Bot API client & message formatters
+│   ├── index.js                 # Worker router & cron entrypoint
+│   ├── monitor.js               # Stock check pipeline orchestration & locking
+│   ├── scraper.js               # Bounded concurrency scraper & completeness validator
+│   ├── store.js                 # Cloudflare KV state, lock lease & diff engine
+│   ├── telegram.js              # Telegram Bot API client & safe message chunking
+│   ├── classifier.js            # Psychedelic taxonomy, 1-10 potency scale & title cleaning
+│   ├── dashboard.js             # HTML dashboard generation
+│   └── auth.js                  # Timing-safe crypto verification & rate limiting
 ├── test/
-│   ├── test-scraper.js   # Scraper test script
-│   ├── test-pagination.js# Pagination test
-│   └── test-full-pipeline.js # Full pipeline & diff simulation test
-├── wrangler.toml         # Cloudflare Worker configuration & Cron triggers
-├── package.json          # Dependencies & scripts
-└── .dev.vars.example     # Local environment variables template
+│   ├── unit/                    # Deterministic offline unit tests
+│   │   ├── auth.test.js
+│   │   ├── classifier.test.js
+│   │   ├── diff.test.js
+│   │   ├── normalization.test.js
+│   │   ├── pagination-validator.test.js
+│   │   └── telegram-chunking.test.js
+│   └── integration/             # Pipeline & failure mode tests
+│       └── failure-modes.test.js
+├── wrangler.toml                # Worker configuration, KV bindings & Cron triggers
+├── package.json                 # Dependencies & test scripts
+└── .dev.vars.example            # Local secrets template
 ```
 
 ---
 
-## 🛠️ Setup & Deployment Guide
+## 🔒 Security Architecture
 
-### 1. Install Dependencies
-```bash
-cd botanicals-stock-bot
-npm install
-```
+- **Timing-Safe Auth**: Token comparisons hash inputs with SHA-256 via `crypto.subtle.digest` before evaluating in constant-time, preventing side-channel timing attacks and length leakage.
+- **Fail-Closed Design**: If `TELEGRAM_WEBHOOK_SECRET` or `ADMIN_TOKEN` is not configured in the environment, requests are rejected immediately with HTTP 500 / 401.
+- **Credential Separation**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, and `ADMIN_TOKEN` operate independently without fallback.
+- **Rate Limiting**: KV-based sliding window cooldown protects the `/check` endpoint from rapid repeated execution.
 
-### 2. Create Cloudflare KV Namespace
-Run the following command in your terminal:
-```bash
-npx wrangler kv namespace create BOTANICALS_STORE
-```
-Copy the returned `id` and update `wrangler.toml`:
-```toml
-[[kv_namespaces]]
-binding = "BOTANICALS_STORE"
-id = "your_kv_namespace_id_here"
-```
+---
 
-### 3. Configure Secrets
-Set your Telegram Bot credentials and admin tokens via Wrangler:
-```bash
-# Set your Telegram Bot Token
-npx wrangler secret put TELEGRAM_BOT_TOKEN
+## 🧪 Testing
 
-# Set your Telegram Chat ID (e.g., 428883333)
-npx wrangler secret put TELEGRAM_CHAT_ID
+Run the 100% offline, deterministic test suite:
 
-# Set an Admin Password for web triggers (e.g., geon_secret_admin_token)
-npx wrangler secret put ADMIN_TOKEN
-
-# Optional: Webhook secret verification token
-npx wrangler secret put TELEGRAM_WEBHOOK_SECRET
-```
-
-### 4. Test Locally
-Run the test suite:
 ```bash
 npm test
 ```
 
-Start the local worker development server:
+Run live smoke tests against the store API:
+
 ```bash
-npm run dev
+npm run test:live
 ```
-
-### 5. Deploy to Cloudflare Workers
-Deploy the worker:
-```bash
-npm run deploy
-```
-
-### 6. Set Telegram Webhook
-Once deployed, link your Telegram Bot to your Cloudflare Worker URL:
-```bash
-curl -F "url=https://botanicals-stock-bot.<your-subdomain>.workers.dev/webhook" \
-     -F "secret_token=your_webhook_secret_token" \
-     https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook
-```
-
----
-
-## ⏰ Cron Schedule
-
-The cron trigger in `wrangler.toml` is configured for **6:00 PM IST**:
-```toml
-[triggers]
-crons = ["30 12 * * *"] # 12:30 UTC = 18:00 IST (UTC+5:30)
-```
-
----
-
-## 🔒 Security & Best Practices
-
-- Constant-time token comparisons via `crypto.subtle` prevent timing attacks.
-- Telegram message chunking prevents exceeding Telegram's 4096-character limit.
-- HTML escaping prevents injection issues in Telegram messages.
-- Subrequest concurrency is optimized to fetch 450+ items in under 3 seconds.
