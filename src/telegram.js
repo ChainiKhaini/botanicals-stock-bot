@@ -403,7 +403,7 @@ export function buildStatusMessage(meta) {
     `• Schedule: <b>Every 30m</b> (Daily Summary at <b>6:00 PM IST</b>)`,
     errors > 0 ? `• Consecutive Errors: <b>${errors}</b>` : ``,
     ``,
-    `💡 Commands: /instock, /psychedelic, /search, /recent, /sony, /check, /help`
+    `💡 Commands: /instock, /psychedelic, /search, /sony, /samsung, /fitbit, /gadgets, /recent, /check, /help`
   ].filter(Boolean).join("\n");
 }
 
@@ -412,22 +412,27 @@ export function buildStatusMessage(meta) {
  */
 export function buildHelpMessage() {
   return [
-    `🌿 <b>100% Pure Botanicals Stock Bot</b>`,
+    `🌿 <b>100% Pure Botanicals Stock Bot & Deal Tracker</b>`,
     `Monitors product availability and alerts you when out-of-stock items come back into stock.`,
     ``,
-    `📋 <b>Available Commands:</b>`,
+    `📋 <b>Botanicals Commands:</b>`,
     `• <code>/instock</code> or <code>/stock</code> — List all products currently in stock`,
     `• <code>/instock [page]</code> — View specific page (e.g. <code>/instock 2</code>)`,
     `• <code>/psychedelic</code> — List psychedelic & entheogenic products in stock 🍄`,
     `• <code>/search &lt;item&gt;</code> — Search for a product by name or keyword`,
-    `• <code>/sony</code> or <code>/xm6</code> — Check live price of Sony WH-1000XM6 on Unboxify 🎧`,
     `• <code>/recent</code> or <code>/restocked</code> — View items that recently came in stock`,
     `• <code>/check</code> — Trigger an immediate live catalog check`,
     `• <code>/status</code> — View monitor statistics and last check time`,
+    ``,
+    `🛍 <b>Unboxify Price Trackers:</b>`,
+    `• <code>/sony</code> or <code>/xm6</code> — Sony WH-1000XM6 Headphones 🎧`,
+    `• <code>/samsung</code> or <code>/watch</code> — Samsung Galaxy Watch 8 (40mm) ⌚`,
+    `• <code>/fitbit</code> or <code>/charge6</code> — Fitbit Charge 6 Fitness Tracker 🏃`,
+    `• <code>/gadgets</code> or <code>/deals</code> — All tracked Unboxify electronics at a glance 🛍`,
     `• <code>/help</code> — Show this commands menu`,
     ``,
     `⏰ <b>Automated Tracking:</b>`,
-    `• Sony WH-1000XM6 Price Check: Daily at <b>10:00 AM IST</b>`,
+    `• Unboxify Price Checks: Daily at <b>10:00 AM IST</b>`,
     `• Botanicals Stock Digest: Daily at <b>6:00 PM IST</b>`
   ].join("\n");
 }

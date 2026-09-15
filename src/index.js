@@ -21,8 +21,16 @@ import { renderDashboardHtml } from "./dashboard.js";
 import { classifyProduct } from "./classifier.js";
 import {
   fetchSonyXM6,
+  fetchSamsungWatch8,
+  fetchFitbitCharge6,
+  fetchAllTrackedProducts,
+  checkAllTrackedPrices,
   checkSonyXM6Price,
-  buildSonyStatusMessage
+  checkSamsungWatchPrice,
+  checkFitbitPrice,
+  buildSonyStatusMessage,
+  buildProductStatusMessage,
+  buildAllProductsSummaryMessage
 } from "./priceTracker.js";
 import {
   validateWebhookSecret,
@@ -30,7 +38,15 @@ import {
   checkRateLimit
 } from "./auth.js";
 
-export { performStockCheck, classifyProduct, checkSonyXM6Price, fetchSonyXM6 };
+export {
+  performStockCheck,
+  classifyProduct,
+  checkSonyXM6Price,
+  checkAllTrackedPrices,
+  fetchSonyXM6,
+  fetchSamsungWatch8,
+  fetchFitbitCharge6
+};
 
 // ─── Webhook Command Processing ─────────────────────────────
 
@@ -198,21 +214,66 @@ async function handleTelegramUpdate(update, env, ctx) {
     })());
     return;
   }
+
+  // /samsung, /galaxywatch, /watch, /watch8 - Check live Samsung Galaxy Watch 8 price on Unboxify
+  if (command === "/samsung" || command === "/galaxywatch" || command === "/watch" || command === "/watch8") {
+    ctx.waitUntil((async () => {
+      try {
+        const product = await fetchSamsungWatch8();
+        const msg = buildProductStatusMessage(product);
+        await sendTelegram(botToken, chatIdStr, msg);
+      } catch (err) {
+        console.error("Samsung watch price query error:", err.message);
+        await sendTelegram(botToken, chatIdStr, `❌ Failed to fetch Samsung Watch price: ${escapeHtml(err.message)}`);
+      }
+    })());
+    return;
+  }
+
+  // /fitbit, /charge6 - Check live Fitbit Charge 6 price on Unboxify
+  if (command === "/fitbit" || command === "/charge6") {
+    ctx.waitUntil((async () => {
+      try {
+        const product = await fetchFitbitCharge6();
+        const msg = buildProductStatusMessage(product);
+        await sendTelegram(botToken, chatIdStr, msg);
+      } catch (err) {
+        console.error("Fitbit price query error:", err.message);
+        await sendTelegram(botToken, chatIdStr, `❌ Failed to fetch Fitbit Charge 6 price: ${escapeHtml(err.message)}`);
+      }
+    })());
+    return;
+  }
+
+  // /gadgets, /deals, /prices - Check all tracked Unboxify gadgets
+  if (command === "/gadgets" || command === "/deals" || command === "/prices") {
+    ctx.waitUntil((async () => {
+      try {
+        const products = await fetchAllTrackedProducts();
+        const msg = buildAllProductsSummaryMessage(products);
+        await sendTelegram(botToken, chatIdStr, msg);
+      } catch (err) {
+        console.error("Gadgets summary query error:", err.message);
+        await sendTelegram(botToken, chatIdStr, `❌ Failed to fetch tracked electronics: ${escapeHtml(err.message)}`);
+      }
+    })());
+    return;
+  }
 }
 
 // ─── Worker Entry Points ────────────────────────────────────
 
 export default {
   /**
-   * Cloudflare Cron Trigger (Runs 10:00 AM IST Sony check + 6:00 PM IST Botanicals digest)
+   * Cloudflare Cron Trigger (Runs 10:00 AM IST Unboxify check + 6:00 PM IST Botanicals digest)
    */
   async scheduled(event, env, ctx) {
     console.log("Cron trigger fired:", event.cron);
-    // 10:00 AM IST (04:30 UTC) -> Sony WH-1000XM6 Price Check
+    // 10:00 AM IST (04:30 UTC) -> Check all tracked Unboxify gadgets
     if (event.cron === "30 4 * * *") {
       ctx.waitUntil(
-        checkSonyXM6Price(env).catch(err => {
-          console.error("Scheduled Sony price check error:", err);
+        checkAllTrackedPrices(env).catch(err => {
+          console.error("Scheduled Unboxify price check error:", err);
         })
       );
     } else {
@@ -317,24 +378,25 @@ export default {
       }
 
       // Mode selection:
-      // ?type=sony or ?type=headphones or ?type=xm6 -> triggers Sony WH-1000XM6 price check & alerts on change
+      // ?type=sony, ?type=samsung, ?type=fitbit, ?type=unboxify, ?type=gadgets -> triggers Unboxify electronics price checks
       // ?type=daily or ?type=digest or ?type=botanicals -> triggers 6:00 PM IST Botanicals daily digest
       // ?type=all -> triggers both
       // ?type=check or default -> triggers periodic botanicals stock check
       const type = (url.searchParams.get("type") || url.searchParams.get("mode") || "").toLowerCase();
       const isSony = type === "sony" || type === "headphones" || type === "xm6";
+      const isGadgets = isSony || type === "samsung" || type === "watch" || type === "fitbit" || type === "unboxify" || type === "gadgets";
       const isDaily = type === "daily" || type === "digest" || type === "botanicals";
       const isAll = type === "all";
 
-      if (isSony || isAll) {
+      if (isGadgets || isAll) {
         ctx.waitUntil(
-          checkSonyXM6Price(env).catch(err => {
-            console.error("Sony price check cron error:", err);
+          checkAllTrackedPrices(env).catch(err => {
+            console.error("Unboxify price check cron error:", err);
           })
         );
       }
 
-      if (isDaily || isAll || (!isSony && !isAll)) {
+      if (isDaily || isAll || (!isGadgets && !isAll)) {
         ctx.waitUntil(
           performStockCheck(env, {
             isScheduled: isDaily || isAll,
@@ -347,13 +409,23 @@ export default {
 
       const message = isSony
         ? "Sony WH-1000XM6 price check triggered successfully in background"
+        : isGadgets
+        ? "Unboxify electronics price checks triggered successfully in background"
         : isDaily
         ? "Daily stock digest triggered successfully in background"
         : isAll
-        ? "Daily digest and Sony price check triggered successfully in background"
+        ? "Daily digest and Unboxify price checks triggered successfully in background"
         : "Stock check triggered successfully in background";
 
-      const mode = isSony ? "sony_price_check" : isDaily ? "daily_digest" : isAll ? "all_checks" : "periodic_check";
+      const mode = isSony
+        ? "sony_price_check"
+        : isGadgets
+        ? "unboxify_price_check"
+        : isDaily
+        ? "daily_digest"
+        : isAll
+        ? "all_checks"
+        : "periodic_check";
 
       return new Response(JSON.stringify({
         ok: true,
