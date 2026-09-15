@@ -50,12 +50,23 @@ test("validateAdminAuth fails closed when admin token is missing or invalid", as
   assert.equal(res2.valid, false);
   assert.match(res2.error, /Missing Bearer token/);
 
-  // Valid token
+  // Valid token via Bearer header
   const req3 = new Request("http://localhost/check", {
     headers: { "Authorization": "Bearer admin_pass" }
   });
   const res3 = await validateAdminAuth(req3, { ADMIN_TOKEN: "admin_pass" });
   assert.equal(res3.valid, true);
+
+  // Valid token via URL query parameter (?token=...)
+  const req4 = new Request("http://localhost/cron?token=admin_pass");
+  const res4 = await validateAdminAuth(req4, { ADMIN_TOKEN: "admin_pass" });
+  assert.equal(res4.valid, true);
+
+  // Invalid token via URL query parameter
+  const req5 = new Request("http://localhost/cron?token=wrong_pass");
+  const res5 = await validateAdminAuth(req5, { ADMIN_TOKEN: "admin_pass" });
+  assert.equal(res5.valid, false);
+  assert.match(res5.error, /Invalid admin token/);
 });
 
 test("checkRateLimit prevents rapid repeated calls", async () => {

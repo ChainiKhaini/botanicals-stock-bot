@@ -69,14 +69,23 @@ export async function validateAdminAuth(request, env) {
     return { valid: false, error: "Server misconfiguration: Admin token missing" };
   }
 
+  let token = "";
   const authHeader = request.headers.get("Authorization") || "";
   const prefix = "Bearer ";
 
-  if (!authHeader.startsWith(prefix)) {
-    return { valid: false, error: "Unauthorized: Missing Bearer token" };
+  if (authHeader.startsWith(prefix)) {
+    token = authHeader.substring(prefix.length).trim();
+  } else {
+    try {
+      const url = new URL(request.url);
+      token = url.searchParams.get("token") || url.searchParams.get("key") || "";
+    } catch (_) {}
   }
 
-  const token = authHeader.substring(prefix.length).trim();
+  if (!token) {
+    return { valid: false, error: "Unauthorized: Missing Bearer token or ?token= query parameter" };
+  }
+
   const isValid = await timingSafeCompare(token, configuredToken);
 
   if (!isValid) {

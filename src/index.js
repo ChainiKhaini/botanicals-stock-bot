@@ -20,12 +20,17 @@ import {
 import { renderDashboardHtml } from "./dashboard.js";
 import { classifyProduct } from "./classifier.js";
 import {
+  fetchSonyXM6,
+  checkSonyXM6Price,
+  buildSonyStatusMessage
+} from "./priceTracker.js";
+import {
   validateWebhookSecret,
   validateAdminAuth,
   checkRateLimit
 } from "./auth.js";
 
-export { performStockCheck, classifyProduct };
+export { performStockCheck, classifyProduct, checkSonyXM6Price, fetchSonyXM6 };
 
 // ─── Webhook Command Processing ─────────────────────────────
 
@@ -178,22 +183,47 @@ async function handleTelegramUpdate(update, env, ctx) {
     })());
     return;
   }
+
+  // /sony, /xm6, /headphones - Check live Sony WH-1000XM6 price on Unboxify
+  if (command === "/sony" || command === "/xm6" || command === "/headphones") {
+    ctx.waitUntil((async () => {
+      try {
+        const product = await fetchSonyXM6();
+        const msg = buildSonyStatusMessage(product);
+        await sendTelegram(botToken, chatIdStr, msg);
+      } catch (err) {
+        console.error("Sony price query error:", err.message);
+        await sendTelegram(botToken, chatIdStr, `❌ Failed to fetch Sony XM6 price: ${escapeHtml(err.message)}`);
+      }
+    })());
+    return;
+  }
 }
 
 // ─── Worker Entry Points ────────────────────────────────────
 
 export default {
   /**
-   * Cloudflare Cron Trigger (Runs periodic 30m checks + 6:00 PM IST daily digest)
+   * Cloudflare Cron Trigger (Runs 10:00 AM IST Sony check + 6:00 PM IST Botanicals digest)
    */
   async scheduled(event, env, ctx) {
     console.log("Cron trigger fired:", event.cron);
-    const isDailyDigest = event.cron === "30 12 * * *";
-    ctx.waitUntil(
-      performStockCheck(env, { isScheduled: isDailyDigest, isPeriodic: !isDailyDigest }).catch(err => {
-        console.error("Scheduled execution error:", err);
-      })
-    );
+    // 10:00 AM IST (04:30 UTC) -> Sony WH-1000XM6 Price Check
+    if (event.cron === "30 4 * * *") {
+      ctx.waitUntil(
+        checkSonyXM6Price(env).catch(err => {
+          console.error("Scheduled Sony price check error:", err);
+        })
+      );
+    } else {
+      // 6:00 PM IST (12:30 UTC) -> Botanicals Daily Digest
+      const isDailyDigest = event.cron === "30 12 * * *";
+      ctx.waitUntil(
+        performStockCheck(env, { isScheduled: isDailyDigest, isPeriodic: !isDailyDigest }).catch(err => {
+          console.error("Scheduled execution error:", err);
+        })
+      );
+    }
   },
 
   /**
@@ -232,14 +262,14 @@ export default {
 
     // 2. Manual Check Endpoint (Fails closed, authenticated & rate-limited)
     if (url.pathname === "/check") {
-      if (request.method !== "POST") {
-        return new Response(JSON.stringify({ error: "Method Not Allowed. Use POST" }), {
+      if (request.method !== "POST" && request.method !== "GET") {
+        return new Response(JSON.stringify({ error: "Method Not Allowed. Use GET or POST" }), {
           status: 405,
           headers: { "Content-Type": "application/json" }
         });
       }
 
-      // Mandatory Admin Token Verification (timing-safe)
+      // Mandatory Admin Token Verification (timing-safe, supports Bearer header or ?token=)
       const auth = await validateAdminAuth(request, env);
       if (!auth.valid) {
         return new Response(JSON.stringify({ error: auth.error }), {
@@ -268,7 +298,76 @@ export default {
       });
     }
 
-    // 3. JSON Status Endpoint (Reports verified state)
+    // 3. Webcron Endpoint (Designed for cron-job.org or external schedulers)
+    if (url.pathname === "/cron") {
+      if (request.method !== "GET" && request.method !== "POST") {
+        return new Response(JSON.stringify({ error: "Method Not Allowed. Use GET or POST" }), {
+          status: 405,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+
+      // Mandatory Admin Token Verification (timing-safe, supports Bearer header or ?token=)
+      const auth = await validateAdminAuth(request, env);
+      if (!auth.valid) {
+        return new Response(JSON.stringify({ error: auth.error }), {
+          status: auth.error.startsWith("Server misconfiguration") ? 500 : 401,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+
+      // Mode selection:
+      // ?type=sony or ?type=headphones or ?type=xm6 -> triggers Sony WH-1000XM6 price check & alerts on change
+      // ?type=daily or ?type=digest or ?type=botanicals -> triggers 6:00 PM IST Botanicals daily digest
+      // ?type=all -> triggers both
+      // ?type=check or default -> triggers periodic botanicals stock check
+      const type = (url.searchParams.get("type") || url.searchParams.get("mode") || "").toLowerCase();
+      const isSony = type === "sony" || type === "headphones" || type === "xm6";
+      const isDaily = type === "daily" || type === "digest" || type === "botanicals";
+      const isAll = type === "all";
+
+      if (isSony || isAll) {
+        ctx.waitUntil(
+          checkSonyXM6Price(env).catch(err => {
+            console.error("Sony price check cron error:", err);
+          })
+        );
+      }
+
+      if (isDaily || isAll || (!isSony && !isAll)) {
+        ctx.waitUntil(
+          performStockCheck(env, {
+            isScheduled: isDaily || isAll,
+            isPeriodic: !isDaily && !isAll
+          }).catch(err => {
+            console.error("Cron trigger execution error:", err);
+          })
+        );
+      }
+
+      const message = isSony
+        ? "Sony WH-1000XM6 price check triggered successfully in background"
+        : isDaily
+        ? "Daily stock digest triggered successfully in background"
+        : isAll
+        ? "Daily digest and Sony price check triggered successfully in background"
+        : "Stock check triggered successfully in background";
+
+      const mode = isSony ? "sony_price_check" : isDaily ? "daily_digest" : isAll ? "all_checks" : "periodic_check";
+
+      return new Response(JSON.stringify({
+        ok: true,
+        success: true,
+        message,
+        mode,
+        timestamp: new Date().toISOString()
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // 4. JSON Status Endpoint (Reports verified state)
     if (url.pathname === "/status") {
       const meta = (await loadMeta(env.BOTANICALS_STORE).catch(() => null)) || { status: "No data recorded yet" };
       return new Response(JSON.stringify(meta, null, 2), {

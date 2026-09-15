@@ -403,7 +403,7 @@ export function buildStatusMessage(meta) {
     `• Schedule: <b>Every 30m</b> (Daily Summary at <b>6:00 PM IST</b>)`,
     errors > 0 ? `• Consecutive Errors: <b>${errors}</b>` : ``,
     ``,
-    `💡 Commands: /instock, /psychedelic, /search, /recent, /check, /help`
+    `💡 Commands: /instock, /psychedelic, /search, /recent, /sony, /check, /help`
   ].filter(Boolean).join("\n");
 }
 
@@ -420,11 +420,14 @@ export function buildHelpMessage() {
     `• <code>/instock [page]</code> — View specific page (e.g. <code>/instock 2</code>)`,
     `• <code>/psychedelic</code> — List psychedelic & entheogenic products in stock 🍄`,
     `• <code>/search &lt;item&gt;</code> — Search for a product by name or keyword`,
+    `• <code>/sony</code> or <code>/xm6</code> — Check live price of Sony WH-1000XM6 on Unboxify 🎧`,
     `• <code>/recent</code> or <code>/restocked</code> — View items that recently came in stock`,
     `• <code>/check</code> — Trigger an immediate live catalog check`,
     `• <code>/status</code> — View monitor statistics and last check time`,
     `• <code>/help</code> — Show this commands menu`,
     ``,
-    `⏰ <b>Automated Checks:</b> Active monitoring every 30m (Daily digest at <b>6:00 PM IST</b>).`
+    `⏰ <b>Automated Tracking:</b>`,
+    `• Sony WH-1000XM6 Price Check: Daily at <b>10:00 AM IST</b>`,
+    `• Botanicals Stock Digest: Daily at <b>6:00 PM IST</b>`
   ].join("\n");
 }

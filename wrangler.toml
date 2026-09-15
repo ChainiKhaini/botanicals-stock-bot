@@ -2,12 +2,9 @@ name = "botanicals-stock-bot"
 main = "src/index.js"
 compatibility_date = "2024-12-01"
 
-# ─── Cron Trigger ───────────────────────────────────────────
-# 30 12 * * * -> Daily at 12:30 UTC = 6:00 PM IST (Asia/Kolkata)
-[triggers]
-crons = [
-  "30 12 * * *"
-]
+# ─── Cron Triggers ──────────────────────────────────────────
+# Migrated to cron-job.org (external webcron) to free Cloudflare Cron slots.
+# No Cloudflare cron triggers attached to this worker.
 
 # ─── KV Namespace Binding ───────────────────────────────────
 [[kv_namespaces]]
