@@ -23,22 +23,18 @@ A production-grade, serverless Cloudflare Worker that:
 
 ---
 
-## 💬 Available Telegram Bot Commands
+## 💬 Telegram Bot Command Menu
+
+The bot is integrated with Telegram's native **Menu ☰** button right next to the chat bar, allowing 1-tap command execution with no manual typing needed:
 
 | Command | Description |
 |---|---|
-| `/gadgets` (or `/deals`, `/prices`) | Live overview of all tracked Unboxify gadgets, prices, and discounts 🛍️ |
-| `/sony` (or `/xm6`) | Check live price, discount, and variant stock of Sony WH-1000XM6 on Unboxify 🎧 |
-| `/samsung` (or `/watch`) | Check live price, discount, and variant stock of Samsung Galaxy Watch 8 ⌚ |
-| `/fitbit` (or `/charge6`) | Check live price, discount, and variant stock of Fitbit Charge 6 🏃 |
-| `/psychedelic` (or `/psychadelic`) | In-stock psychedelic & entheogenic products sorted by potency (1–10/10) with descriptions 🍄 |
-| `/instock` or `/stock` | Paginated list of all products currently in stock with clean titles |
-| `/instock <page>` | View specific page (e.g. `/instock 2`) |
-| `/search <keyword>` | Search product catalog by name or keyword |
-| `/recent` or `/restocked` | View items that recently came back into stock |
-| `/check` | Trigger an immediate live catalog scan |
-| `/status` | View monitor health, total tracked items, in-stock ratio, and last check time |
-| `/help` | Overview of all commands |
+| `/gadgets` | Live prices & stock for Sony XM6, Watch 8 & Fitbit 🛍️ |
+| `/stock` | Paginated catalog of all in-stock botanicals 🌿 |
+| `/psychedelic` | In-stock psychedelic & entheogenic herbs sorted by potency (1–10/10) 🍄 |
+| `/search <keyword>` | Search botanicals catalog (e.g. `/search kefir`) 🔍 |
+| `/check` | Trigger immediate scan for botanicals stock & gadget prices ⚡ |
+| `/help` | Usage instructions and bot information 💡 |
 
 ---
 

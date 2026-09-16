@@ -82,3 +82,31 @@ test("/cron endpoint accepts ?type=sony for 10 AM IST Sony XM6 price tracking", 
   assert.match(data.message, /Sony WH-1000XM6 price check/);
   assert.ok(backgroundPromise);
 });
+
+test("/setup-commands endpoint registers Telegram bot commands with valid auth", async () => {
+  const req = new Request("http://localhost/setup-commands?token=valid_admin_token_123");
+  const env = {
+    ADMIN_TOKEN: "valid_admin_token_123",
+    TELEGRAM_BOT_TOKEN: "mock_token"
+  };
+  const ctx = { waitUntil() {} };
+
+  // mock global fetch for Telegram Bot API calls
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({ ok: true, result: true })
+  });
+
+  try {
+    const res = await worker.fetch(req, env, ctx);
+    assert.equal(res.status, 200);
+    const data = await res.json();
+    assert.equal(data.ok, true);
+    assert.equal(data.success, true);
+    assert.equal(data.commands.length, 6);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+

@@ -8,7 +8,8 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "test": "node --test test/unit/*.test.js test/integration/*.test.js",
-    "test:live": "node test/test-full-pipeline.js"
+    "test:live": "node test/test-full-pipeline.js",
+    "set-commands": "node scripts/set-commands.js"
   },
   "keywords": [
     "cloudflare-workers",

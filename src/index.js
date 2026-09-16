@@ -15,7 +15,9 @@ import {
   buildRecentRestocksMessage,
   buildStatusMessage,
   buildHelpMessage,
-  buildPsychedelicListMessage
+  buildPsychedelicListMessage,
+  registerBotCommands,
+  BOT_COMMANDS
 } from "./telegram.js";
 import { renderDashboardHtml } from "./dashboard.js";
 import { classifyProduct } from "./classifier.js";
@@ -76,7 +78,12 @@ async function handleTelegramUpdate(update, env, ctx) {
 
   // /start and /help
   if (command === "/start" || command === "/help") {
-    ctx.waitUntil(sendTelegram(botToken, chatIdStr, buildHelpMessage()));
+    ctx.waitUntil((async () => {
+      if (command === "/start") {
+        registerBotCommands(botToken).catch(() => {});
+      }
+      await sendTelegram(botToken, chatIdStr, buildHelpMessage());
+    })());
     return;
   }
 
@@ -98,11 +105,14 @@ async function handleTelegramUpdate(update, env, ctx) {
     return;
   }
 
-  // /check - manual refresh
+  // /check - manual refresh (refreshes botanicals catalog & tracked gadget prices)
   if (command === "/check") {
     ctx.waitUntil((async () => {
-      await sendTelegram(botToken, chatIdStr, "🔍 <b>Checking 100% Pure Botanicals catalog for latest stock...</b>");
-      await performStockCheck(env, { isManual: true, chatId: chatIdStr });
+      await sendTelegram(botToken, chatIdStr, "🔍 <b>Checking Botanicals stock and Unboxify gadget prices...</b>");
+      await Promise.allSettled([
+        performStockCheck(env, { isManual: true, chatId: chatIdStr }),
+        checkAllTrackedPrices(env, { chatId: chatIdStr })
+      ]);
     })());
     return;
   }
@@ -359,7 +369,29 @@ export default {
       });
     }
 
-    // 3. Webcron Endpoint (Designed for cron-job.org or external schedulers)
+    // 3. Register Telegram Bot Commands Menu (/setup-commands)
+    if (url.pathname === "/setup-commands") {
+      const auth = await validateAdminAuth(request, env);
+      if (!auth.valid) {
+        return new Response(JSON.stringify({ error: auth.error }), {
+          status: auth.error.startsWith("Server misconfiguration") ? 500 : 401,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+
+      const ok = await registerBotCommands(env.TELEGRAM_BOT_TOKEN);
+      return new Response(JSON.stringify({
+        ok,
+        success: ok,
+        message: ok ? "Telegram bot menu commands registered successfully" : "Failed to register bot commands",
+        commands: BOT_COMMANDS
+      }), {
+        status: ok ? 200 : 502,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // 4. Webcron Endpoint (Designed for cron-job.org or external schedulers)
     if (url.pathname === "/cron") {
       if (request.method !== "GET" && request.method !== "POST") {
         return new Response(JSON.stringify({ error: "Method Not Allowed. Use GET or POST" }), {

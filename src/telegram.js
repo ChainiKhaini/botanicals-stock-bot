@@ -403,8 +403,43 @@ export function buildStatusMessage(meta) {
     `• Schedule: <b>Every 30m</b> (Daily Summary at <b>6:00 PM IST</b>)`,
     errors > 0 ? `• Consecutive Errors: <b>${errors}</b>` : ``,
     ``,
-    `💡 Commands: /instock, /psychedelic, /search, /sony, /samsung, /fitbit, /gadgets, /recent, /check, /help`
+    `💡 <i>Tap <b>Menu ☰</b> or use: /gadgets, /stock, /psychedelic, /search, /check</i>`
   ].filter(Boolean).join("\n");
+}
+
+/**
+ * Clean list of primary Telegram commands for the native Menu button
+ */
+export const BOT_COMMANDS = [
+  { command: "gadgets", description: "Prices for Sony XM6, Watch 8 and Fitbit" },
+  { command: "stock", description: "Browse in-stock botanicals catalog" },
+  { command: "psychedelic", description: "In-stock entheogens and psychedelics" },
+  { command: "search", description: "Search botanicals by keyword" },
+  { command: "check", description: "Refresh stock and gadget prices now" },
+  { command: "help", description: "Show commands and help guide" }
+];
+
+/**
+ * Register commands and configure native Menu button with Telegram Bot API
+ */
+export async function registerBotCommands(botToken, options = {}) {
+  const customFetch = options.customFetch || fetch;
+
+  const cmdRes = await customFetch(`https://api.telegram.org/bot${botToken}/setMyCommands`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ commands: BOT_COMMANDS })
+  });
+
+  try {
+    await customFetch(`https://api.telegram.org/bot${botToken}/setChatMenuButton`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ menu_button: { type: "commands" } })
+    });
+  } catch (_) {}
+
+  return cmdRes.ok;
 }
 
 /**
@@ -412,27 +447,18 @@ export function buildStatusMessage(meta) {
  */
 export function buildHelpMessage() {
   return [
-    `🌿 <b>100% Pure Botanicals Stock Bot & Deal Tracker</b>`,
-    `Monitors product availability and alerts you when out-of-stock items come back into stock.`,
+    `🌿 <b>Botanicals & Electronics Tracker Bot</b>`,
+    `Tap the <b>Menu ☰</b> button next to the chat bar to run any command instantly!`,
     ``,
-    `📋 <b>Botanicals Commands:</b>`,
-    `• <code>/instock</code> or <code>/stock</code> — List all products currently in stock`,
-    `• <code>/instock [page]</code> — View specific page (e.g. <code>/instock 2</code>)`,
-    `• <code>/psychedelic</code> — List psychedelic & entheogenic products in stock 🍄`,
-    `• <code>/search &lt;item&gt;</code> — Search for a product by name or keyword`,
-    `• <code>/recent</code> or <code>/restocked</code> — View items that recently came in stock`,
-    `• <code>/check</code> — Trigger an immediate live catalog check`,
-    `• <code>/status</code> — View monitor statistics and last check time`,
+    `📋 <b>Essential Commands:</b>`,
+    `• <code>/gadgets</code> — Live prices for Sony XM6, Watch 8 & Fitbit 🛍`,
+    `• <code>/stock</code> — Browse in-stock botanicals catalog 🌿`,
+    `• <code>/psychedelic</code> — In-stock entheogens & psychedelics 🍄`,
+    `• <code>/search &lt;item&gt;</code> — Search botanicals by name (e.g. <code>/search kefir</code>)`,
+    `• <code>/check</code> — Trigger immediate catalog & price check 🔍`,
+    `• <code>/help</code> — Show this guide`,
     ``,
-    `🛍 <b>Unboxify Price Trackers:</b>`,
-    `• <code>/sony</code> or <code>/xm6</code> — Sony WH-1000XM6 Headphones 🎧`,
-    `• <code>/samsung</code> or <code>/watch</code> — Samsung Galaxy Watch 8 (40mm) ⌚`,
-    `• <code>/fitbit</code> or <code>/charge6</code> — Fitbit Charge 6 Fitness Tracker 🏃`,
-    `• <code>/gadgets</code> or <code>/deals</code> — All tracked Unboxify electronics at a glance 🛍`,
-    `• <code>/help</code> — Show this commands menu`,
-    ``,
-    `⏰ <b>Automated Tracking:</b>`,
-    `• Unboxify Price Checks: Daily at <b>10:00 AM IST</b>`,
-    `• Botanicals Stock Digest: Daily at <b>6:00 PM IST</b>`
+    `⏰ <i>Automated alerts are sent whenever prices drop or items restock.</i>`
   ].join("\n");
 }
+
