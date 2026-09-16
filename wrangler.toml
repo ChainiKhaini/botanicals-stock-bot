@@ -3,8 +3,10 @@ main = "src/index.js"
 compatibility_date = "2024-12-01"
 
 # ─── Cron Triggers ──────────────────────────────────────────
-# Migrated to cron-job.org (external webcron) to free Cloudflare Cron slots.
-# No Cloudflare cron triggers attached to this worker.
+# Explicitly empty crons list to instruct Cloudflare to delete all cron triggers
+# (Migrated to cron-job.org to free Cloudflare cron quota)
+[triggers]
+crons = []
 
 # ─── KV Namespace Binding ───────────────────────────────────
 [[kv_namespaces]]

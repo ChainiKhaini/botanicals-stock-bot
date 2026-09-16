@@ -53,3 +53,59 @@ test("performStockCheck fails closed on page fetch failure without corrupting KV
   const snapshotAfterFailure = JSON.parse(kvStore.get(KV_KEY_SNAPSHOT));
   assert.deepEqual(snapshotAfterFailure, initialSnapshot);
 });
+
+test("performStockCheck prevents duplicate daily digest on the same day", async () => {
+  const kvStore = new Map();
+  const initialSnapshot = {
+    "1": { id: "1", name: "Product 1", inStock: true, price: "₹500" }
+  };
+  kvStore.set(KV_KEY_SNAPSHOT, JSON.stringify(initialSnapshot));
+
+  const mockKv = {
+    async get(k, opts) {
+      const val = kvStore.get(k);
+      if (!val) return null;
+      if (opts && opts.type === "json") return JSON.parse(val);
+      return val;
+    },
+    async put(k, v) { kvStore.set(k, v); },
+    async delete(k) { kvStore.delete(k); }
+  };
+
+  let sentMessages = [];
+  const mockFetch = async (rawUrl, opts) => {
+    if (rawUrl.includes("api.telegram.org")) {
+      sentMessages.push(opts?.body);
+      return { ok: true, async json() { return { ok: true }; } };
+    }
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return {
+          total_count: 1,
+          pages: 1,
+          products: [{ id: 1, name: "Product 1", in_stock: true, price: "₹500" }]
+        };
+      }
+    };
+  };
+
+  const env = {
+    BOTANICALS_STORE: mockKv,
+    TELEGRAM_BOT_TOKEN: "mock_token",
+    TELEGRAM_CHAT_ID: "mock_chat"
+  };
+
+  // Run 1: First 6:00 PM IST daily digest of the day
+  const res1 = await performStockCheck(env, { isScheduled: true, customFetch: mockFetch });
+  assert.equal(res1.success, true);
+  assert.equal(sentMessages.length, 1);
+  assert.match(sentMessages[0], /Daily Stock Update/);
+
+  // Run 2: Duplicate 6:00 PM IST trigger (e.g. cloudflare cron + cron-job.org)
+  const res2 = await performStockCheck(env, { isScheduled: true, customFetch: mockFetch });
+  assert.equal(res2.success, true);
+  // Still exactly 1 message - duplicate was blocked!
+  assert.equal(sentMessages.length, 1);
+});

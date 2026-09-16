@@ -112,6 +112,13 @@ export async function performStockCheck(env, options = {}) {
     // Only executed if the entire scrape succeeded and diff completed
     await saveSnapshot(kv, diff.nextSnapshot);
 
+    const todayIst = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(new Date());
+
     const nextMeta = {
       lastCheck: nowIso,
       totalCount: catalog.totalCount,
@@ -122,7 +129,8 @@ export async function performStockCheck(env, options = {}) {
       consecutiveErrors: 0,
       lastError: "",
       lastRestockCount: newlyAvailable.length,
-      lastScanDurationMs: Date.now() - startTime
+      lastScanDurationMs: Date.now() - startTime,
+      lastDailyDigestDate: meta.lastDailyDigestDate || null
     };
     await saveMeta(kv, nextMeta);
 
@@ -161,16 +169,26 @@ export async function performStockCheck(env, options = {}) {
     }
 
     // Notification routing:
-    // Case A: 6:00 PM IST Scheduled Daily Digest -> Sends unified daily update (with restocks if any)
+    // Case A: 6:00 PM IST Scheduled Daily Digest -> Sends unified daily update (idempotent: max 1 per day)
+    const isDailyAlreadySent = meta.lastDailyDigestDate === todayIst;
+
     if (isScheduled && botToken && chatId) {
-      const dailyData = buildDailyUpdateChunks({
-        inStockCount: catalog.inStockCount,
-        totalCount: catalog.totalCount,
-        restocked: diff.restocked,
-        newlyAdded: diff.newlyAdded,
-        inStockProducts: catalog.inStockProducts
-      });
-      await sendChunkedMessages(botToken, chatId, dailyData.header, dailyData.items, dailyData.footer, { customFetch });
+      if (isDailyAlreadySent && !options.force) {
+        console.log(`Daily digest for ${todayIst} already sent earlier today. Skipping duplicate.`);
+      } else {
+        const dailyData = buildDailyUpdateChunks({
+          inStockCount: catalog.inStockCount,
+          totalCount: catalog.totalCount,
+          restocked: diff.restocked,
+          newlyAdded: diff.newlyAdded,
+          inStockProducts: catalog.inStockProducts
+        });
+        await sendChunkedMessages(botToken, chatId, dailyData.header, dailyData.items, dailyData.footer, { customFetch });
+
+        // Update meta with today's date so duplicate triggers never re-send
+        nextMeta.lastDailyDigestDate = todayIst;
+        await saveMeta(kv, nextMeta);
+      }
     }
     // Case B: Periodic 30m check or manual check with restocks -> Sends instant restock alert
     else if (diff.hasRestocks && botToken && chatId) {
